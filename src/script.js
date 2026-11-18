@@ -70,7 +70,7 @@ document.body.appendChild( renderer.inspector.domElement );
 
 // GUI
 const gui = renderer.inspector.createParameters( 'Tweaks' );
-
+gui.close()
 
 // Loaders
 const hdrLoader = new HDRLoader().setPath( './textures/' );
