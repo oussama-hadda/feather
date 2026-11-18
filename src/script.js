@@ -104,6 +104,81 @@ controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.49;  // stay above the water
 controls.minDistance = 1;
 controls.maxDistance = 30;
+controls.update();
+
+
+/**
+ * Camera orbit: starts on page load, circles the scene in one direction while
+ * rising, then sinks back so each lap ends exactly at the starting shot.
+ * Pauses while the user drags, then picks up from wherever they left the camera.
+ */
+const orbit = {
+    enabled: true,
+    duration: 40,                                   // s per full lap (and per up/down cycle)
+    rise: 0.45,                                     // rad the camera climbs at the top of the lap
+    idleDelay: 3,                                   // s before the orbit resumes after interaction
+    time: 0,
+    idle: Infinity,                                 // s since last interaction
+    weight: 0,                                      // 0..1, ramps in so starting/resuming is gentle
+    baseTarget: controls.target.clone(),
+    base: new THREE.Spherical().setFromVector3( camera.position.clone().sub( controls.target ) ),
+    current: new THREE.Spherical(),
+    offset: new THREE.Vector3()
+};
+
+let interacting = false;
+controls.addEventListener( 'start', () => {
+
+    interacting = true;
+    orbit.weight = 0;
+
+} );
+controls.addEventListener( 'end', () => {
+
+    interacting = false;
+    orbit.idle = 0;
+
+} );
+
+function updateOrbit( dt ) {
+
+    if ( ! orbit.enabled || interacting ) return;
+
+    const { base, current, offset } = orbit;
+    offset.copy( camera.position ).sub( controls.target );
+    current.setFromVector3( offset );
+
+    orbit.idle += dt;
+    if ( orbit.idle < orbit.idleDelay ) return;
+
+    // just resumed: continue the lap from the angle the user left the camera at
+    if ( orbit.weight === 0 ) {
+
+        const angle = THREE.MathUtils.euclideanModulo( current.theta - base.theta, Math.PI * 2 );
+        orbit.time = angle / ( Math.PI * 2 ) * orbit.duration;
+
+    }
+
+    orbit.weight = Math.min( 1, orbit.weight + dt / 3 );
+    orbit.time += dt * orbit.weight;    // speed ramps up instead of jumping
+
+    // one lap = one full turn + one rise-and-fall, back at the start when it wraps
+    const phase = ( orbit.time % orbit.duration ) / orbit.duration;
+    const theta = base.theta + phase * Math.PI * 2;
+    const phi = base.phi - orbit.rise * 0.5 * ( 1 - Math.cos( phase * Math.PI * 2 ) );
+
+    // follow the path; settles height, distance and target smoothly after user input
+    const k = 1 - Math.exp( - dt * 2 );
+    let dTheta = theta - current.theta;
+    dTheta = Math.atan2( Math.sin( dTheta ), Math.cos( dTheta ) );
+    current.theta += dTheta * k;
+    current.phi += ( phi - current.phi ) * k;
+    current.radius += ( base.radius - current.radius ) * k;
+
+    controls.target.lerp( orbit.baseTarget, k );
+    camera.position.setFromSpherical( current ).add( controls.target );
+
+}
 
 
 /**
@@ -145,6 +220,8 @@ gui.add( params, 'swing', 0, 2, 0.01 );
 gui.add( params, 'rippleStrength', 0, 3, 0.01 ).name( 'ripple strength' );
 gui.add( params, 'swell', 0, 3, 0.01 );
 gui.add( params, 'timeScale', 0, 2, 0.01 ).name( 'time scale' );
+gui.add( orbit, 'enabled' ).name( 'camera orbit' );
+gui.add( orbit, 'duration', 10, 120, 1 ).name( 'orbit duration (s)' );
 
 
 /**
@@ -168,11 +245,13 @@ timer.connect( document );
 function tick() {
 
     timer.update();
-    const dt = Math.min( timer.getDelta(), 1 / 30 ) * params.timeScale;
+    const realDt = Math.min( timer.getDelta(), 1 / 30 );
+    const dt = realDt * params.timeScale;
     water.time.value += dt;
     water.swellStrength.value = params.swell;
 
     feathers.update( dt );
+    updateOrbit( realDt );
     controls.update();
     renderer.render( scene, camera );
 
